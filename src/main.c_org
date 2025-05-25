@@ -16,8 +16,6 @@
 #include "esp_log.h"
 #include "ethernet_init.h"
 #include "sdkconfig.h"
-#include "esp_mac.h"
-#include "web_server.h"
 
 static const char *TAG = "eth_example";
 
@@ -69,13 +67,6 @@ void app_main(void)
 {
     // Initialize Ethernet driver
     uint8_t eth_port_cnt = 0;
-/*    
-    uint8_t baseMac[6];
-    esp_efuse_mac_get_default(baseMac); 
-    ESP_LOGI(TAG, "read_mac_efuse:" MACSTR,MAC2STR(baseMac));
-    esp_read_mac(baseMac, ESP_MAC_BASE);
-    ESP_LOGI(TAG, "read_mac");
-*/
     esp_eth_handle_t *eth_handles;
     ESP_ERROR_CHECK(example_eth_init(&eth_handles, &eth_port_cnt));
 
@@ -129,13 +120,4 @@ void app_main(void)
     for (int i = 0; i < eth_port_cnt; i++) {
         ESP_ERROR_CHECK(esp_eth_start(eth_handles[i]));
     }
-    setup_websocket_server();
-
-    // Hlavní smyčka programu.
-    while (true) {
-        // Zde se budou v budoucnu provádět další úkoly aplikace.
-        // Např. čtení dat ze skutečných senzorů a jejich odesílání do fronty.
-        vTaskDelay(pdMS_TO_TICKS(1000)); // Krátké zpoždění, aby se neblokovalo CPU
-    }
-
 }

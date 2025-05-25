@@ -1,0 +1,92 @@
+#include <stdio.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/queue.h" // Přidáno pro práci s frontou
+#include "esp_log.h"
+#include "nvs_flash.h"
+#include "esp_random.h" // Přidáno pro generování náhodných dat
+
+#include "eth.h" // Zahrnutí hlavičkového souboru pro Ethernet modul
+#include "web_server.h" // Zahrnutí hlavičkového souboru pro webserver modul
+
+static const char *TAG_MAIN = "MAIN"; // TAG pro main modul
+
+// Handle fronty pro předávání dat webserveru
+QueueHandle_t sensor_data_queue = NULL;
+
+// Taska pro generování a odesílání dummy dat do fronty
+static void data_generator_task(void *pvParameters)
+{
+    sensor_data_t data;
+    float current_azimuth = 0.0;
+    float current_elevation = 0.0;
+
+    while (1) {
+        // Generování náhodných dat pro azimut a elevaci
+        // Azimut v rozsahu 0-360
+        current_azimuth = (float)(esp_random() % 3600) / 10.0;
+        // Elevace v rozsahu -10 až 90
+        current_elevation = (float)(esp_random() % 1010) / 10.0 - 10.0;
+
+
+        data.azimuth = current_azimuth;
+        data.elevation = current_elevation;
+
+        // Odeslání dat do fronty (neblokující, s malým čekáním)
+        if (sensor_data_queue != NULL) {
+            if (xQueueSend(sensor_data_queue, &data, pdMS_TO_TICKS(10)) != pdTRUE) {
+                ESP_LOGW(TAG_MAIN, "Failed to send data to queue");
+            }
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(500)); // Odesílat data každých 500ms
+    }
+    vTaskDelete(NULL);
+}
+
+
+void app_main(void)
+{
+    // Inicializace NVS (Non-Volatile Storage).
+    // Nutné pro síťové funkce a dobrou praxi.
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(ret);
+
+    ESP_LOGI(TAG_MAIN, "Starting application...");
+
+    // Inicializace Ethernetu voláním funkce z eth.c
+    ESP_ERROR_CHECK(ethernet_init());
+
+    // Vytvoření fronty pro předávání dat webserveru
+    sensor_data_queue = xQueueCreate(10, sizeof(sensor_data_t)); // Fronta s kapacitou 10 prvků
+
+    if (sensor_data_queue == NULL) {
+        ESP_LOGE(TAG_MAIN, "Failed to create sensor data queue");
+        // Zde byste měli ošetřit chybu, např. restartovat nebo přejít do chybového stavu.
+        return;
+    }
+    ESP_LOGI(TAG_MAIN, "Sensor data queue created");
+
+
+
+    // Vytvoření tasky pro generování dummy dat
+    BaseType_t xReturned = xTaskCreate(data_generator_task, "data_gen", 2048, NULL, tskIDLE_PRIORITY + 1, NULL);
+    if (xReturned != pdPASS) {
+        ESP_LOGE(TAG_MAIN, "Failed to create data generator task");
+        // Zde byste měli ošetřit chybu.
+    }
+    ESP_LOGI(TAG_MAIN, "Data generator task created");
+
+    setup_websocket_server();
+
+    // Hlavní smyčka programu.
+    while (true) {
+        // Zde se budou v budoucnu provádět další úkoly aplikace.
+        // Např. čtení dat ze skutečných senzorů a jejich odesílání do fronty.
+        vTaskDelay(pdMS_TO_TICKS(1000)); // Krátké zpoždění, aby se neblokovalo CPU
+    }
+}
