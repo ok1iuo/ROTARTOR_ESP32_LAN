@@ -19,7 +19,9 @@ typedef struct {
  * @param data_queue Handle FreeRTOS fronty pro příjem dat senzoru (azimut, elevace).
  * @return esp_err_t ESP_OK při úspěchu, jinak chybový kód.
  */
-httpd_handle_t setup_websocket_server(void);
+static httpd_handle_t server;
+
+ httpd_handle_t setup_websocket_server(void);
 
 
 #endif // WEB_SERVER_H

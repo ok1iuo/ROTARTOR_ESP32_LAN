@@ -7,10 +7,12 @@
 #include "nvs_flash.h"
 #include "driver/gpio.h" // Pro případné ovládání GPIO pro indikaci stavu serveru
 #include "cJSON.h" // Pro práci s JSON daty
+#include "web_server.h"
 
 static const char *TAG_WEB = "WEB_SERVER";
+static const char *TAG_SEND = "WEBSOCKET SEND";
 
-static httpd_handle_t server = NULL;
+
 static QueueHandle_t sensor_data_queue = NULL;
 
 // HTML obsah webové stránky
@@ -21,6 +23,7 @@ const char *INDEX_HTML = R"raw(
 <head>
     <title>ESP32 Senzor Data</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta charset="UTF-8">
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -257,6 +260,49 @@ static esp_err_t websocket_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+void websocket_send_data_task( void * pvParameters ){
+    sensor_data_t data; 
+    data.azimuth=0;
+    data.elevation=45;
+    while(1){
+        ESP_LOGI(TAG_SEND, "Attempting to send 'ahoj' to all connected clients.");
+        // Vytvoření JSON objektu
+            if (data.azimuth>=360){
+                data.azimuth=0;
+            }else {
+                data.azimuth+=5;
+            }
+            cJSON *root = cJSON_CreateObject();
+            cJSON_AddNumberToObject(root, "azimuth", data.azimuth);
+            cJSON_AddNumberToObject(root, "elevation", data.elevation);
+            char *json_string = cJSON_PrintUnformatted(root);
+            httpd_ws_frame_t ws_pkt;
+            memset(&ws_pkt, 0, sizeof(httpd_ws_frame_t));
+            ws_pkt.len = strlen(json_string);
+            ws_pkt.payload = (uint8_t *)json_string;
+            ws_pkt.type = HTTPD_WS_TYPE_TEXT;    
+            static size_t max_clients = CONFIG_LWIP_MAX_LISTENING_TCP;
+           size_t fds = max_clients;
+            int client_fds[max_clients];
+
+            esp_err_t ret = httpd_get_client_list(server, &fds, client_fds);
+
+            ESP_LOGI(TAG_SEND, "Attempting to send 'MSG' to   connected clients. %d",fds);
+
+            for (int i = 0; i < fds; i++) {
+                int client_info = httpd_ws_get_fd_info(server, client_fds[i]);
+                if (client_info == HTTPD_WS_CLIENT_WEBSOCKET) {
+                    httpd_ws_send_frame_async(server, client_fds[i], &ws_pkt);
+                }
+            }
+        vTaskDelay(pdMS_TO_TICKS(1000)); // Krátké zpoždění, aby se neblokovalo CPU
+
+    }
+
+
+}
+
+
 httpd_handle_t setup_websocket_server(void)
 {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
@@ -282,17 +328,14 @@ httpd_handle_t setup_websocket_server(void)
         httpd_register_uri_handler(server, &ws);
     }
 
-/*
+
     // Vytvoření tasky pro odesílání dat přes WebSocket
     BaseType_t xReturned = xTaskCreate(websocket_send_data_task, "ws_send_data", 4096, NULL, tskIDLE_PRIORITY + 5, NULL);
     if (xReturned != pdPASS) {
         ESP_LOGE(TAG_WEB, "Failed to create WebSocket send data task");
-        stop_web_server(); // Zastavit servery, pokud se tasku nepodaří vytvořit
-        return ESP_FAIL;
     }
      ESP_LOGI(TAG_WEB, "WebSocket send data task created");
+     
+     return server;
 
-*/
-
-    return server;
-}
+}    
