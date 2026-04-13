@@ -1,6 +1,6 @@
 /* Ethernet Basic Example
 
-   This example code is in the Public Domain (or CC0 licensed, at your option.)
+   This example code is is in the Public Domain (or CC0 licensed, at your option.)
 
    Unless required by applicable law or agreed to in writing, this
    software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
@@ -17,7 +17,10 @@
 #include "ethernet_init.h"
 #include "sdkconfig.h"
 #include "esp_mac.h"
-#include "web_server.h"
+#include "nvs_flash.h" // ADDED: For NVS flash initialization
+
+#include "web_server.h"    // Your web server header
+#include "rs485_handler.h" // ADDED: Your new RS485 handler header
 
 static const char *TAG = "eth_example";
 
@@ -63,19 +66,26 @@ static void got_ip_event_handler(void *arg, esp_event_base_t event_base,
     ESP_LOGI(TAG, "ETHMASK:" IPSTR, IP2STR(&ip_info->netmask));
     ESP_LOGI(TAG, "ETHGW:" IPSTR, IP2STR(&ip_info->gw));
     ESP_LOGI(TAG, "~~~~~~~~~~~");
+
+    // ADDED: Start the web server once IP address is obtained
+    // This ensures the server starts only after network is ready.
+    web_server_start(); 
 }
 
 void app_main(void)
 {
+    // Initialize NVS (Non-Volatile Storage)
+    // This is generally a good practice for ESP-IDF applications, even if not strictly
+    // used for Wi-Fi credentials in this Ethernet example, it might be used by other components.
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+      ESP_ERROR_CHECK(nvs_flash_erase());
+      ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(ret);
+
     // Initialize Ethernet driver
     uint8_t eth_port_cnt = 0;
-/*    
-    uint8_t baseMac[6];
-    esp_efuse_mac_get_default(baseMac); 
-    ESP_LOGI(TAG, "read_mac_efuse:" MACSTR,MAC2STR(baseMac));
-    esp_read_mac(baseMac, ESP_MAC_BASE);
-    ESP_LOGI(TAG, "read_mac");
-*/
     esp_eth_handle_t *eth_handles;
     ESP_ERROR_CHECK(example_eth_init(&eth_handles, &eth_port_cnt));
 
@@ -123,19 +133,31 @@ void app_main(void)
 
     // Register user defined event handlers
     ESP_ERROR_CHECK(esp_event_handler_register(ETH_EVENT, ESP_EVENT_ANY_ID, &eth_event_handler, NULL));
+    // IMPORTANT: Register got_ip_event_handler to start web server AFTER IP is obtained
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_ETH_GOT_IP, &got_ip_event_handler, NULL));
+
 
     // Start Ethernet driver state machine
     for (int i = 0; i < eth_port_cnt; i++) {
         ESP_ERROR_CHECK(esp_eth_start(eth_handles[i]));
     }
-    setup_websocket_server();
+    
+    // ADDED: Initialize RS485 communication (from your new rs485_handler.cpp)
+    // This sets up the UART driver and creates the command/update queues.
+    rs485_init();
 
-    // Hlavní smyčka programu.
+    // ADDED: Create the FreeRTOS task for handling RS485 communication.
+    // This task will process commands from the queue and send/receive data over RS485.
+    xTaskCreate(rs485_task, "rs485_task", 4096, NULL, 5, NULL); // Priority 5, 4KB stack
+
+    // The web server will now be started in `got_ip_event_handler`
+    // to ensure it only starts once the Ethernet interface has an IP address.
+    // REMOVED: setup_websocket_server();
+
+    // Main application loop.
+    // This loop can remain, but most of the heavy lifting is done by dedicated FreeRTOS tasks.
     while (true) {
-        // Zde se budou v budoucnu provádět další úkoly aplikace.
-        // Např. čtení dat ze skutečných senzorů a jejich odesílání do fronty.
-        vTaskDelay(pdMS_TO_TICKS(1000)); // Krátké zpoždění, aby se neblokovalo CPU
+        // You can add other application-specific tasks here if needed.
+        vTaskDelay(pdMS_TO_TICKS(1000)); // Short delay to prevent blocking CPU
     }
-
 }

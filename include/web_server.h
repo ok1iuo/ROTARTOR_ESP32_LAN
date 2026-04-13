@@ -3,25 +3,25 @@
 
 #include "esp_err.h"
 #include "freertos/FreeRTOS.h"
-#include "freertos/queue.h"
-#include <esp_http_server.h>
+#include "freertos/queue.h"    // Potřebné pro QueueHandle_t
+#include <esp_http_server.h>   // Potřebné pro httpd_handle_t
 
+// Externí deklarace fronty pro aktualizace úhlu (plní ji rs485_handler.cpp)
+extern QueueHandle_t xAngleUpdateQueue; 
 
-// Struktura pro přenos dat azimutu a elevace
-typedef struct {
-    float azimuth;
-    float elevation;
-} sensor_data_t;
+// Funkce pro odeslání úhlu klientům přes WebSocket.
+void web_server_send_angle_update(int angle); 
 
-/**
- * @brief Inicializuje a spustí webový server a WebSocket server.
- *
- * @param data_queue Handle FreeRTOS fronty pro příjem dat senzoru (azimut, elevace).
- * @return esp_err_t ESP_OK při úspěchu, jinak chybový kód.
- */
-static httpd_handle_t server;
+// Funkce pro odeslání příkazu z webového klienta do RS485 fronty.
+void web_server_send_rs485_command_from_client(const char *command_type, int value);
 
- httpd_handle_t setup_websocket_server(void);
+// FreeRTOS task pro monitorování fronty aktualizací úhlu a odesílání dat přes WebSocket.
+void angle_update_websocket_task(void *pvParameters); 
 
+// Funkce pro inicializaci a spuštění HTTP a WebSocket serverů.
+httpd_handle_t web_server_start(void); 
+
+// Funkce pro zastavení webového serveru.
+void web_server_stop(void);
 
 #endif // WEB_SERVER_H
