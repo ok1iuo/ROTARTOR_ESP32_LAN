@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OK1IUO Rotator</title>
+<style>
+/* Layout: instrument panel — status strip on top, azimuth dial as the hero, elevation arc beside it, stacks to one column on phones.
+   Self-contained on purpose (system fonts, no CDN): served by the ESP32, which may have no internet. */
+:root {
+  --bg: #e9edf1;
+  --panel: #f8fafb;
+  --ink: #15202b;
+  --muted: #5d6b78;
+  --line: #c9d2da;
+  --needle: #1f4e79;
+  --target: #c76a00;
+  --ok: #2e7d4f;
+  --bad: #c62828;
+  --bad-bg: #fde8e8;
+  --warn: #9a6a00;
+  --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-num: ui-monospace, "SF Mono", "Cascadia Mono", "DejaVu Sans Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0e1418; --panel: #172128; --ink: #e3e9ee; --muted: #8fa0ad; --line: #2c3a44;
+  --needle: #7fb4e6; --target: #f0a040; --ok: #5cc28a; --bad: #ff5a52; --bad-bg: #3a1617; --warn: #e0b24a;
+  color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0e1418; --panel: #172128; --ink: #e3e9ee; --muted: #8fa0ad; --line: #2c3a44;
+  --needle: #7fb4e6; --target: #f0a040; --ok: #5cc28a; --bad: #ff5a52; --bad-bg: #3a1617; --warn: #e0b24a;
+  color-scheme: dark }
+
+* { box-sizing: border-box }
+body { background: var(--bg); color: var(--ink); font-family: var(--font-ui); font-size: 15px; padding: 16px; padding-block: 16px 32px }
+.wrap { max-width: 1040px; margin: 0 auto; display: grid; gap: 16px }
+h1 { font-size: 1.15rem; margin: 0; letter-spacing: .02em; text-wrap: balance }
+h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .12em; color: var(--muted); margin: 0 }
+.num { font-family: var(--font-num); font-variant-numeric: tabular-nums }
+
+/* --- top bar --- */
+.top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px }
+.pills { display: flex; flex-wrap: wrap; gap: 8px }
+.pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); font-size: .82rem; font-weight: 600 }
+.pill i { width: 9px; height: 9px; border-radius: 50%; background: var(--ok) }
+.pill.bad { border-color: var(--bad); color: var(--bad); background: var(--bad-bg) }
+.pill.bad i { background: var(--bad); animation: blink 1s steps(2) infinite }
+.pill.off { color: var(--muted) } .pill.off i { background: var(--line) }
+
+/* --- alarm banner --- */
+.alarm { border: 2px solid var(--bad); background: var(--bad-bg); color: var(--bad); border-radius: 8px; padding: 12px 14px; font-weight: 700; display: flex; gap: 12px; align-items: center }
+.alarm::before { content: "!"; flex: none; width: 28px; height: 28px; border-radius: 50%; background: var(--bad); color: var(--bad-bg); display: grid; place-items: center; font-size: 1.1rem; animation: blink 1s steps(2) infinite }
+.alarm small { display: block; font-weight: 400; color: var(--ink); margin-top: 2px }
+
+/* --- instruments --- */
+.grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 16px }
+@media (max-width: 760px) { .grid { grid-template-columns: minmax(0, 1fr) } }
+.card { position: relative; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; display: grid; gap: 12px; align-content: start; min-width: 0 }
+.card.dead { border: 2px solid var(--bad) }
+.card.dead svg { opacity: .35; filter: grayscale(1) }
+.card.dead .readout .val { color: var(--muted); text-decoration: line-through }
+.deadtag { display: none; position: absolute; top: 12px; right: 12px; background: var(--bad); color: #fff; font-weight: 800; font-size: .78rem; letter-spacing: .08em; padding: 4px 8px; border-radius: 4px }
+.card.dead .deadtag { display: block }
+.card.absent { opacity: .6 }
+
+.readout { display: flex; flex-wrap: wrap; gap: 8px 24px; align-items: baseline }
+.readout .val { font-size: 2.6rem; font-weight: 700; line-height: 1 }
+.readout .lbl { font-size: .78rem; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; display: block; margin-bottom: 4px }
+.readout .tgt { font-size: 1.4rem; color: var(--target); font-weight: 700 }
+.state { font-size: .85rem; color: var(--muted) }
+
+svg.dial { width: 100%; max-width: 420px; aspect-ratio: 1; justify-self: center; cursor: crosshair; touch-action: manipulation }
+svg.arc { width: 100%; max-width: 300px; aspect-ratio: 1; justify-self: center }
+.ref { stroke: var(--line); stroke-dasharray: 3 4 }
+.tick { stroke: var(--muted) } .tick.major { stroke: var(--ink) }
+.ring { fill: none; stroke: var(--line) }
+.lab { fill: var(--muted); font-size: 11px; font-family: var(--font-num); text-anchor: middle; dominant-baseline: central }
+.lab.card { fill: var(--ink); font-size: 16px; font-weight: 700; font-family: var(--font-ui) }
+#needle, #elNeedle { transition: transform .35s ease-out }
+.needle { fill: var(--needle) }
+.hub { fill: var(--ink) }
+.tmark { fill: none; stroke: var(--target); stroke-width: 3 }
+.tline { stroke: var(--target); stroke-width: 2; stroke-dasharray: 5 5 }
+
+form.goto { display: flex; flex-wrap: wrap; gap: 8px; align-items: center }
+input, button { font: inherit }
+input[type=number] { width: 7ch; padding: 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); font-family: var(--font-num) }
+button { padding: 8px 14px; border-radius: 6px; border: 1px solid var(--needle); background: var(--needle); color: var(--panel); font-weight: 700; cursor: pointer }
+button.ghost { background: transparent; color: var(--ink); border-color: var(--line); font-weight: 600 }
+button:disabled, input:disabled { opacity: .45; cursor: not-allowed }
+:focus-visible { outline: 3px solid var(--target); outline-offset: 2px }
+
+footer { font-size: .78rem; color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px 16px }
+
+@keyframes blink { 50% { opacity: .25 } }
+@media (prefers-reduced-motion: reduce) { #needle, #elNeedle { transition: none } .pill.bad i, .alarm::before { animation: none } }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header class="top">
+    <h1>OK1IUO Rotator</h1>
+    <div class="pills" id="pills"></div>
+  </header>
+
+  <div id="alarms"></div>
+
+  <section class="grid">
+    <article class="card" id="azCard">
+      <span class="deadtag">BEZ SPOJENÍ</span>
+      <h2>Azimut</h2>
+      <div class="readout">
+        <div><span class="lbl">Aktuální</span><span class="val num" id="azVal">—</span></div>
+        <div><span class="lbl">Cíl</span><span class="tgt num" id="azTgt">—</span></div>
+      </div>
+      <div class="state" id="azState">Čekám na první data…</div>
+      <svg class="dial" id="dial" viewBox="-160 -160 320 320" role="img" aria-label="Kompasová růžice azimutu, kliknutím nastavíte cíl">
+        <circle class="ring" r="150" stroke-width="2"/>
+        <g id="ticks"></g>
+        <line class="tline" id="tline" x1="0" y1="0" x2="0" y2="-138" visibility="hidden"/>
+        <polygon class="tmark" id="tmark" points="0,-150 -9,-134 9,-134" visibility="hidden"/>
+        <g id="needle"><polygon class="needle" points="0,-128 -9,-96 -4,-96 -4,18 4,18 4,-96 9,-96"/></g>
+        <circle class="hub" r="9"/>
+      </svg>
+      <form class="goto" id="azForm">
+        <label for="azInput">Natočit na</label>
+        <input type="number" id="azInput" min="0" max="359" step="1" value="0" required>°
+        <button type="submit" id="azGo">Natočit</button>
+        <button type="button" class="ghost" id="azCancel">Zastavit</button>
+      </form>
+    </article>
+
+    <article class="card" id="elCard">
+      <span class="deadtag">BEZ SPOJENÍ</span>
+      <h2>Elevace</h2>
+      <div class="readout">
+        <div><span class="lbl">Aktuální</span><span class="val num" id="elVal">—</span></div>
+      </div>
+      <div class="state" id="elState">Čekám na první data…</div>
+      <svg class="arc" viewBox="-48 -168 214 232" role="img" aria-label="Ukazatel elevace od -20 do 100 stupňů">
+        <path class="ring" d="M140.95 51.3 A150 150 0 0 0 -26.05 -147.72" stroke-width="2"/>
+        <line class="ref" x1="0" y1="0" x2="150" y2="0"/>
+        <line class="ref" x1="0" y1="0" x2="0" y2="-150"/>
+        <g id="elTicks"></g>
+        <g id="elNeedle"><polygon class="needle" points="128,0 96,-8 96,-3 -10,-3 -10,3 96,3 96,8"/></g>
+        <circle class="hub" r="8"/>
+      </svg>
+      <p class="note">Ovládání elevace (příkaz F2) přijde v dalším kole, zatím jen zobrazení.</p>
+    </article>
+  </section>
+
+
+  <footer>
+    <span>Řídicí jednotka <span class="num" id="verEsp">0.0.1</span></span>
+    <span>Deska AZ <span class="num" id="verAz">0.0.1</span></span>
+    <span>Deska EL <span class="num" id="verEl">0.0.1</span></span>
+  </footer>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var NS = "http://www.w3.org/2000/svg";
+  var WS_SILENT_MS = 3000;   // ESP32 sends state every 250 ms; silence longer than this = link lost
+
+  function el(id) { return document.getElementById(id); }
+  function mk(tag, attrs, parent) {
+    var n = document.createElementNS(NS, tag);
+    for (var k in attrs) n.setAttribute(k, attrs[k]);
+    parent.appendChild(n); return n;
+  }
+
+  // --- dial ticks ---
+  (function () {
+    var g = el("ticks");
+    for (var a = 0; a < 360; a += 5) {
+      var major = a % 30 === 0, r1 = major ? 136 : (a % 10 === 0 ? 141 : 145);
+      var rad = (a - 90) * Math.PI / 180;
+      mk("line", { x1: Math.cos(rad) * r1, y1: Math.sin(rad) * r1, x2: Math.cos(rad) * 150, y2: Math.sin(rad) * 150,
+        "class": "tick" + (major ? " major" : ""), "stroke-width": major ? 2 : 1 }, g);
+      if (major) {
+        var txt = { 0: "S", 90: "V", 180: "J", 270: "Z" }[a];
+        var t = mk("text", { x: Math.cos(rad) * 120, y: Math.sin(rad) * 120, "class": "lab" + (txt ? " card" : "") }, g);
+        t.textContent = txt || a;
+      }
+    }
+    var e = el("elTicks");
+    for (var b = -20; b <= 100; b += 5) {
+      var maj = b % 10 === 0, rr = maj ? 138 : 144, rd = -b * Math.PI / 180;
+      mk("line", { x1: Math.cos(rd) * rr, y1: Math.sin(rd) * rr, x2: Math.cos(rd) * 150, y2: Math.sin(rd) * 150,
+        "class": "tick" + (maj ? " major" : ""), "stroke-width": maj ? 2 : 1 }, e);
+      if (b === -20 || b % 30 === 0) { var tt = mk("text", { x: Math.cos(rd) * 120, y: Math.sin(rd) * 120, "class": "lab" }, e); tt.textContent = b; }
+    }
+  })();
+
+  // --- WebSocket link to the ESP32 ---
+  var ws = null;
+  var state = null;            // last state message: {ver, az:{...}, el:{...}}
+  var lastMsgAt = 0;
+  var pageLoadedAt = Date.now();
+
+  function connect() {
+    ws = new WebSocket("ws://" + window.location.host + "/ws");
+    ws.onmessage = function (ev) {
+      try { state = JSON.parse(ev.data); lastMsgAt = Date.now(); render(); }
+      catch (e) { console.error("Bad state message", e); }
+    };
+    ws.onclose = function () { setTimeout(connect, 2000); };
+    ws.onerror = function () { ws.close(); };
+  }
+
+  function send(obj) {
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
+  }
+
+  // --- rendering ---
+  var needleRot = null;
+  function shortest(prev, next) {            // keep cumulative rotation so 359 -> 1 turns 2 deg, not 358
+    if (prev === null) return next;
+    var cur = ((prev % 360) + 360) % 360;
+    var delta = ((next - cur + 540) % 360) - 180;
+    return prev + delta;
+  }
+  function ago(ms) { return ms < 1500 ? "právě teď" : "před " + Math.round(ms / 1000) + " s"; }
+  function pad3(n) { n = Math.round(n); return ("00" + n).slice(-3); }
+
+  function render() {
+    var now = Date.now();
+    var s = state;
+    var wsDown = s ? now - lastMsgAt > WS_SILENT_MS : now - pageLoadedAt > WS_SILENT_MS;
+    var azOk = !wsDown && s && s.az.ok;
+    var elPresent = s ? s.el.present : true;
+    var elOk = !wsDown && s && s.el.ok;
+
+    function pill(txt, cls) { return '<span class="pill ' + cls + '"><i></i>' + txt + "</span>"; }
+    el("pills").innerHTML =
+      pill(wsDown ? "ESP32 bez spojení" : (s ? "ESP32 spojeno" : "Připojuji…"), wsDown ? "bad" : (s ? "" : "off")) +
+      pill(!s || wsDown ? "AZ ?" : (azOk ? "AZ OK" : "AZ nekomunikuje"), !s || wsDown ? "off" : (azOk ? "" : "bad")) +
+      pill(!s || wsDown ? "EL ?" : (!elPresent ? "EL se neozvala" : (elOk ? "EL OK" : "EL nekomunikuje")), !s || wsDown || !elPresent ? "off" : (elOk ? "" : "bad"));
+
+    var a = [];
+    if (wsDown) a.push([s ? "Ztraceno spojení s řídicí jednotkou ESP32" : "Nedaří se spojit s řídicí jednotkou ESP32",
+      (s ? "Údaje na stránce jsou staré. " : "") + "Stránka se znovu připojuje sama; zkontrolujte síť nebo napájení jednotky."]);
+    else if (s && !s.az.ok) a.push(["Deska AZIMUT nekomunikuje", (s.az.present ? "Poslední platná odpověď " + ago(s.az.age_ms) + ". " : "Od zapnutí neodpověděla. ") + "Zkontrolujte RS485 kabel a napájení desky. Příkazy pro azimut jsou zablokované."]);
+    if (!wsDown && s && s.el.present && !s.el.ok) a.push(["Deska ELEVACE nekomunikuje", "Poslední platná odpověď " + ago(s.el.age_ms) + ". Zkontrolujte RS485 kabel a napájení desky."]);
+    el("alarms").innerHTML = a.map(function (x) { return '<div class="alarm" role="alert"><div>' + x[0] + "<small>" + x[1] + "</small></div></div>"; }).join("");
+
+    el("azCard").classList.toggle("dead", !!s && !azOk);
+    if (s && s.az.present) {
+      el("azVal").textContent = pad3(s.az.deg) + "°";
+      needleRot = shortest(needleRot, s.az.deg);
+      el("needle").setAttribute("transform", "rotate(" + needleRot + ")");
+    }
+    var hasT = !!s && s.az.target !== null;
+    el("azTgt").textContent = hasT ? pad3(s.az.target) + "°" : "—";
+    ["tmark", "tline"].forEach(function (id) {
+      el(id).setAttribute("visibility", hasT ? "visible" : "hidden");
+      if (hasT) el(id).setAttribute("transform", "rotate(" + s.az.target + ")");
+    });
+    if (s) el("azState").textContent = !azOk ? (s.az.present ? "Data jsou neplatná, poslední odpověď " + ago(s.az.age_ms) : "Deska azimutu zatím neodpověděla")
+      : hasT ? "Otáčím na " + pad3(s.az.target) + "°, zbývá " + Math.abs(s.az.target - s.az.deg) + "°"
+      : "Stojí";
+    el("azGo").disabled = el("azInput").disabled = !azOk;
+    el("azCancel").disabled = !azOk || !hasT;
+
+    el("elCard").classList.toggle("dead", !!s && elPresent && !elOk);
+    el("elCard").classList.toggle("absent", !!s && !elPresent);
+    if (s) {
+      if (!elPresent) {
+        el("elVal").textContent = "—";
+        el("elState").textContent = "Deska elevace od zapnutí neodpověděla. Pokud je nainstalovaná, zkontrolujte kabel RS485 a napájení.";
+      } else {
+        el("elVal").textContent = s.el.deg + "°";
+        el("elNeedle").setAttribute("transform", "rotate(" + (-Math.max(-20, Math.min(100, s.el.deg))) + ")");
+        el("elState").textContent = elOk ? "Stojí" : "Data jsou neplatná, poslední odpověď " + ago(s.el.age_ms);
+      }
+      el("verEsp").textContent = s.ver || "—";
+      el("verAz").textContent = s.az.ver || "—";
+      el("verEl").textContent = s.el.ver || "—";
+    }
+  }
+
+  // --- input ---
+  el("dial").addEventListener("click", function (ev) {
+    if (el("azGo").disabled) return;
+    var r = el("dial").getBoundingClientRect();
+    var x = ev.clientX - (r.left + r.width / 2), y = ev.clientY - (r.top + r.height / 2);
+    var deg = Math.round((Math.atan2(y, x) * 180 / Math.PI + 90 + 360) % 360);
+    el("azInput").value = deg;
+    send({ cmd: "az_goto", deg: deg });
+  });
+  el("azForm").addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    var v = parseInt(el("azInput").value, 10);
+    if (isNaN(v) || v < 0 || v > 359) return;
+    send({ cmd: "az_goto", deg: v });
+  });
+  el("azCancel").addEventListener("click", function () { send({ cmd: "az_stop" }); });
+
+  connect();
+  setInterval(render, 500);   // keeps "age" texts and the link watchdog fresh between messages
+  render();
+})();
+</script>
+</body>
+</html>
