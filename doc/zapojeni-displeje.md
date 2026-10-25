@@ -13,8 +13,8 @@ Firmware dotyk zatím neobsluhuje; jeho piny níže jsou připravené pro proved
 
 ## Lišta JP1 na ESPlan v1.1
 
-Podle schématu `HW/old/ESPlan_v1_1.pdf` v repozitáři
-[LaskaKit/ESPlan](https://github.com/LaskaKit/ESPlan):
+Podle schématu [ESPlan_v1_1.pdf](ESPlan_v1_1.pdf) (2. list; kopie `HW/old/ESPlan_v1_1.pdf`
+z repozitáře [LaskaKit/ESPlan](https://github.com/LaskaKit/ESPlan)):
 
 | Pin JP1 | Signál | Pin JP1 | Signál |
 |---|---|---|---|
@@ -51,7 +51,7 @@ Piny jsou ve firmwaru v `include/display.h`.
 ## Na co dát pozor
 
 - **IO4 (TX1) a IO36 (RX1)** na liště patří sběrnici RS485 k deskám AZ/EL.
-- **Pin VCC (2) je jen napájecí vstup**: do desky vede přes diodu, takže při napájení
+- **Pin VCC (2) je jen napájecí vstup**: do desky vede přes diodu D2 na +5V, takže při napájení
   z USB nebo PoE na něm nic není. Displej napájej z 3V3. Z VCC jen tehdy, když přes něj
   napájíš celou desku 5 V – podsvícení pak bude jasnější.
 - **Do slotu na kartu SD na ESPlanu nic nedávej**: karta sdílí s displejem IO12–IO14.
