@@ -22,6 +22,14 @@ bool rotator_parse_angle(const char *line, int min_deg, int max_deg, int *deg_ou
 // Returns true when "ver:" was found and a non-empty version copied to out.
 bool rotator_parse_version(const char *text, char *out, size_t out_size);
 
+// Units accept and store offsets in this range (whole degrees, added to the sensor angle).
+#define ROTATOR_OFFSET_LIMIT_DEG 180
+
+// Parses the offset line of a status answer, e.g. "O OFFSET:5.00" (prefix "O OFFSET:") or
+// "O2 OFFSET:-3.00" (prefix "O2 OFFSET:"). The unit prints a float; it is rounded to whole
+// degrees. Rejects other lines, "nan"/"ovf" and values outside +-ROTATOR_OFFSET_LIMIT_DEG.
+bool rotator_parse_offset(const char *line, const char *prefix, int *offset_out);
+
 // True when the reported angle is within the units' stop tolerance of the target.
 bool rotator_target_reached(int deg, int target);
 

@@ -40,6 +40,11 @@ static cJSON *axis_to_json(const rotator_axis_state_t *a)
     }
     cJSON_AddNumberToObject(o, "age_ms", a->age_ms);
     cJSON_AddStringToObject(o, "ver", a->ver);
+    if (a->offset_known) {
+        cJSON_AddNumberToObject(o, "offset", a->offset);
+    } else {
+        cJSON_AddNullToObject(o, "offset");
+    }
     return o;
 }
 
@@ -106,7 +111,8 @@ static esp_err_t http_server_uri_handler(httpd_req_t *req)
 }
 
 // Commands from the page: {"cmd":"az_goto","deg":N}, {"cmd":"az_stop"},
-// {"cmd":"set_el_installed","value":true|false}, {"cmd":"set_gs232","value":"A"|"B"}
+// {"cmd":"set_el_installed","value":true|false}, {"cmd":"set_gs232","value":"A"|"B"},
+// {"cmd":"set_offset","axis":"az"|"el","value":N}
 static void handle_client_command(const char *payload)
 {
     cJSON *root = cJSON_Parse(payload);
@@ -117,6 +123,7 @@ static void handle_client_command(const char *payload)
     const cJSON *cmd = cJSON_GetObjectItemCaseSensitive(root, "cmd");
     const cJSON *deg = cJSON_GetObjectItemCaseSensitive(root, "deg");
     const cJSON *value = cJSON_GetObjectItemCaseSensitive(root, "value");
+    const cJSON *axis = cJSON_GetObjectItemCaseSensitive(root, "axis");
     if (cJSON_IsString(cmd) && strcmp(cmd->valuestring, "az_goto") == 0 && cJSON_IsNumber(deg)) {
         rotator_cmd_az_goto(deg->valueint);
     } else if (cJSON_IsString(cmd) && strcmp(cmd->valuestring, "az_stop") == 0) {
@@ -126,6 +133,9 @@ static void handle_client_command(const char *payload)
     } else if (cJSON_IsString(cmd) && strcmp(cmd->valuestring, "set_gs232") == 0 && cJSON_IsString(value) &&
                (strcmp(value->valuestring, "A") == 0 || strcmp(value->valuestring, "B") == 0)) {
         gs232_server_set_variant(value->valuestring[0] == 'B' ? GS232_VARIANT_B : GS232_VARIANT_A);
+    } else if (cJSON_IsString(cmd) && strcmp(cmd->valuestring, "set_offset") == 0 && cJSON_IsNumber(value) &&
+               cJSON_IsString(axis) && (strcmp(axis->valuestring, "az") == 0 || strcmp(axis->valuestring, "el") == 0)) {
+        rotator_cmd_set_offset(axis->valuestring[0] == 'a' ? ROTATOR_AXIS_AZ : ROTATOR_AXIS_EL, value->valueint);
     } else {
         ESP_LOGW(TAG_WEB, "Unknown command from client: %s", payload);
     }

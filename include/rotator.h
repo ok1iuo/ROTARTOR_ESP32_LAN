@@ -35,6 +35,8 @@ typedef struct {
     int target;        // requested angle when has_target
     uint32_t age_ms;   // time since the last valid answer (0 when never answered)
     char ver[24];      // unit firmware version from its status answer, "" when unknown
+    bool offset_known; // offset read from the unit's status answer
+    int offset;        // degrees the unit adds to its sensor angle, when offset_known
 } rotator_axis_state_t;
 
 typedef struct {
@@ -61,6 +63,11 @@ bool rotator_cmd_el_goto(int deg);
 
 // Stops the elevation by setting its target to the current position.
 bool rotator_cmd_el_stop(void);
+
+// Sends a new offset (whole degrees, -180..180) to the AZ or EL unit, which stores it in its
+// EEPROM and adds it to the sensor angle; the unit's status is read back to confirm it.
+// Returns false when the value is out of range, the unit is not installed or the queue is full.
+bool rotator_cmd_set_offset(rotator_axis_t axis, int deg);
 
 // Sets whether the elevation unit is installed; persisted in NVS. When not installed the
 // EL unit is not polled and its silence is not reported as a fault.

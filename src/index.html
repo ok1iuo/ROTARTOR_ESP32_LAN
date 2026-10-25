@@ -160,6 +160,19 @@ footer { font-size: .78rem; color: var(--muted); display: flex; flex-wrap: wrap;
     <h2>Nastavení</h2>
     <label for="elInstalled"><input type="checkbox" id="elInstalled" checked> Deska elevace je osazená</label>
     <p class="note">Když deska elevace osazená není, jednotka se na ni neptá a její mlčení nehlásí jako poruchu.</p>
+    <form class="goto" id="azOffForm">
+      <label for="azOff">Offset azimutu</label>
+      <input type="number" id="azOff" min="-180" max="180" step="1" required> °
+      <button type="submit" id="azOffGo">Uložit do desky</button>
+      <span class="note" id="azOffNow"></span>
+    </form>
+    <form class="goto" id="elOffForm">
+      <label for="elOff">Offset elevace</label>
+      <input type="number" id="elOff" min="-180" max="180" step="1" required> °
+      <button type="submit" id="elOffGo">Uložit do desky</button>
+      <span class="note" id="elOffNow"></span>
+    </form>
+    <p class="note">Offset si deska uloží a přičítá ho k úhlu ze snímače. Když anténa míří na 90° a stránka ukazuje 85°, zvyš offset o 5. Celé stupně od −180 do 180.</p>
     <label for="gs232">Protokol Yaesu
       <select id="gs232">
         <option value="A">GS-232A (+0aaa+0eee)</option>
@@ -312,6 +325,23 @@ footer { font-size: .78rem; color: var(--muted); display: flex; flex-wrap: wrap;
       }
     }
     el("elInstalled").disabled = el("gs232").disabled = wsDown || !s;
+    renderOffset("az", s && !wsDown && s.az.ok ? s.az : null, "deska nekomunikuje");
+    renderOffset("el", s && !wsDown && elInstalled && s.el.ok ? s.el : null, elInstalled ? "deska nekomunikuje" : "deska není osazená");
+  }
+
+  // Offset as the unit reports it; the input follows it unless the user is editing.
+  var offShown = { az: undefined, el: undefined }, offSent = { az: null, el: null };
+  function renderOffset(ax, a, why) {
+    var now = el(ax + "OffNow"), input = el(ax + "Off");
+    el(ax + "OffGo").disabled = input.disabled = !a;
+    if (!a) { now.textContent = why; return; }
+    var off = a.offset === undefined ? null : a.offset;
+    if (offSent[ax] !== null && off === offSent[ax]) offSent[ax] = null;
+    now.textContent = offSent[ax] !== null ? "odesílám…" : off === null ? "deska offset nehlásí" : "v desce " + off + "°";
+    if (off !== offShown[ax] && document.activeElement !== input) {
+      input.value = off === null ? "" : off;
+      offShown[ax] = off;
+    }
   }
 
   // --- input ---
@@ -341,6 +371,18 @@ footer { font-size: .78rem; color: var(--muted); display: flex; flex-wrap: wrap;
     settingPending = true;
     send({ cmd: "set_gs232", value: el("gs232").value });
     setTimeout(function () { settingPending = false; }, 1000);
+  });
+  ["az", "el"].forEach(function (ax) {
+    el(ax + "OffForm").addEventListener("submit", function (ev) {
+      ev.preventDefault();
+      var v = parseInt(el(ax + "Off").value, 10);
+      if (isNaN(v) || v < -180 || v > 180) return;
+      offSent[ax] = v;
+      el(ax + "Off").blur();
+      send({ cmd: "set_offset", axis: ax, value: v });
+      setTimeout(function () { offSent[ax] = null; }, 3000);
+      render();
+    });
   });
   el("hostAddr").textContent = window.location.hostname;
 

@@ -57,6 +57,33 @@ static void test_parse_version_truncates(void)
     TEST_ASSERT_EQUAL_STRING("0.0.1", v);
 }
 
+static void test_parse_offset(void)
+{
+    int off = 42;
+    TEST_ASSERT_TRUE(rotator_parse_offset("O OFFSET:5.00", "O OFFSET:", &off));
+    TEST_ASSERT_EQUAL_INT(5, off);
+    TEST_ASSERT_TRUE(rotator_parse_offset("O2 OFFSET:-3.00\r", "O2 OFFSET:", &off));
+    TEST_ASSERT_EQUAL_INT(-3, off);
+    TEST_ASSERT_TRUE(rotator_parse_offset("O OFFSET:0.00", "O OFFSET:", &off));
+    TEST_ASSERT_EQUAL_INT(0, off);
+    TEST_ASSERT_TRUE(rotator_parse_offset("O OFFSET:-179.60", "O OFFSET:", &off));
+    TEST_ASSERT_EQUAL_INT(-180, off);
+}
+
+static void test_parse_offset_rejects_other_lines(void)
+{
+    int off = 42;
+    TEST_ASSERT_FALSE(rotator_parse_offset("O2 OFFSET:5.00", "O OFFSET:", &off));   // EL line for AZ
+    TEST_ASSERT_FALSE(rotator_parse_offset("O OFFSET:5.00", "O2 OFFSET:", &off));
+    TEST_ASSERT_FALSE(rotator_parse_offset("O OFFSET:nan", "O OFFSET:", &off));
+    TEST_ASSERT_FALSE(rotator_parse_offset("O OFFSET:ovf", "O OFFSET:", &off));
+    TEST_ASSERT_FALSE(rotator_parse_offset("O OFFSET:", "O OFFSET:", &off));
+    TEST_ASSERT_FALSE(rotator_parse_offset("O OFFSET:200.00", "O OFFSET:", &off));
+    TEST_ASSERT_FALSE(rotator_parse_offset("O OFFSET:5.00x", "O OFFSET:", &off));
+    TEST_ASSERT_FALSE(rotator_parse_offset("new azimut offset =5.00", "O OFFSET:", &off));
+    TEST_ASSERT_EQUAL_INT(42, off);
+}
+
 static void test_target_reached(void)
 {
     TEST_ASSERT_TRUE(rotator_target_reached(100, 100));
@@ -96,6 +123,8 @@ int main(void)
     RUN_TEST(test_parse_angle_rejects_out_of_range);
     RUN_TEST(test_parse_version);
     RUN_TEST(test_parse_version_truncates);
+    RUN_TEST(test_parse_offset);
+    RUN_TEST(test_parse_offset_rejects_other_lines);
     RUN_TEST(test_target_reached);
     RUN_TEST(test_line_reader_splits_unit_answer);
     return UNITY_END();

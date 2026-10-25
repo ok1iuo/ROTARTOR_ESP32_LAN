@@ -81,6 +81,37 @@ bool rotator_parse_version(const char *text, char *out, size_t out_size)
     return true;
 }
 
+bool rotator_parse_offset(const char *line, const char *prefix, int *offset_out)
+{
+    if (line == NULL || prefix == NULL || offset_out == NULL) {
+        return false;
+    }
+    while (is_blank(*line)) {
+        line++;
+    }
+    size_t n = strlen(prefix);
+    if (strncmp(line, prefix, n) != 0) {
+        return false;
+    }
+    const char *p = line + n;
+    while (is_blank(*p)) {
+        p++;
+    }
+    if (!(isdigit((unsigned char)*p) || ((*p == '-' || *p == '+') && isdigit((unsigned char)p[1])))) {
+        return false;   // also rejects "nan", "ovf", "inf"
+    }
+    char *end;
+    double value = strtod(p, &end);
+    while (is_blank(*end)) {
+        end++;
+    }
+    if (*end != '\0' || value < -ROTATOR_OFFSET_LIMIT_DEG || value > ROTATOR_OFFSET_LIMIT_DEG) {
+        return false;
+    }
+    *offset_out = (int)(value < 0 ? value - 0.5 : value + 0.5);
+    return true;
+}
+
 bool rotator_target_reached(int deg, int target)
 {
     return abs(deg - target) <= ROTATOR_TARGET_TOLERANCE_DEG;

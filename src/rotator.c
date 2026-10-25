@@ -21,23 +21,31 @@ static const char *TAG = "ROTATOR";
 #define NVS_NAMESPACE        "rotator"
 #define NVS_KEY_EL_INSTALLED "el_inst"
 
+typedef enum {
+    CMD_GOTO,
+    CMD_STOP,     // target = current position
+    CMD_OFFSET,
+} cmd_kind_t;
+
 typedef struct {
     rotator_axis_t axis;
-    bool stop;   // true: target = current position
+    cmd_kind_t kind;
     int deg;
 } cmd_t;
 
 typedef struct {
     const char *get_cmd;     // angle query
     const char *goto_cmd;    // goto command prefix
-    const char *status_cmd;  // status query (contains "ver:")
+    const char *status_cmd;  // status query (contains "ver:" and the offset line)
+    const char *offset_cmd;  // set offset command prefix
+    const char *offset_line; // offset line prefix in the status answer
     int min_deg;
     int max_deg;
 } axis_proto_t;
 
 static const axis_proto_t AXIS_PROTO[ROTATOR_AXIS_COUNT] = {
-    [ROTATOR_AXIS_AZ] = { "C",  "F",  "ST",  0,   360 },
-    [ROTATOR_AXIS_EL] = { "C2", "F2", "ST2", -90, 180 },
+    [ROTATOR_AXIS_AZ] = { "C",  "F",  "ST",  "O",  "O OFFSET:",  0,   360 },
+    [ROTATOR_AXIS_EL] = { "C2", "F2", "ST2", "O2", "O2 OFFSET:", -90, 180 },
 };
 
 typedef struct {
@@ -47,8 +55,10 @@ typedef struct {
     bool has_target;
     int target;
     int64_t last_ok_us;
-    bool ver_tried;
+    bool status_tried;   // false: read the status (version, offset) in the next round
     char ver[24];
+    bool offset_known;
+    int offset;
 } axis_runtime_t;
 
 static axis_runtime_t s_axis[ROTATOR_AXIS_COUNT];
@@ -99,10 +109,23 @@ static bool accept_angle(const char *line, void *ctx)
     return rotator_parse_angle(line, a->proto->min_deg, a->proto->max_deg, &a->deg);
 }
 
-static bool accept_version(const char *line, void *ctx)
+typedef struct {
+    const axis_proto_t *proto;
+    char ver[24];
+    bool ver_found;
+    int offset;
+    bool offset_found;
+} status_ctx_t;
+
+// The version line comes first, the offset line later (last line of ST2).
+static bool accept_status(const char *line, void *ctx)
 {
-    char *ver = ctx;
-    return rotator_parse_version(line, ver, 24);
+    status_ctx_t *st = ctx;
+    if (!st->ver_found) {
+        st->ver_found = rotator_parse_version(line, st->ver, sizeof st->ver);
+    }
+    st->offset_found = st->offset_found || rotator_parse_offset(line, st->proto->offset_line, &st->offset);
+    return st->offset_found;
 }
 
 static bool accept_nothing(const char *line, void *ctx)
@@ -131,19 +154,27 @@ static void poll_angle(rotator_axis_t axis)
     xSemaphoreGive(s_lock);
 }
 
-static void query_version(rotator_axis_t axis)
+static void query_status(rotator_axis_t axis)
 {
-    char ver[24] = "";
-    bus_send(AXIS_PROTO[axis].status_cmd, 0, false);
-    bool found = bus_read_until(STATUS_TIMEOUT_MS, accept_version, ver);
+    status_ctx_t st = { .proto = &AXIS_PROTO[axis] };
+    bus_send(st.proto->status_cmd, 0, false);
+    bus_read_until(STATUS_TIMEOUT_MS, accept_status, &st);
     bus_read_until(50, accept_nothing, NULL);   // let the rest of the status text pass
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    s_axis[axis].ver_tried = true;
-    if (found) {
-        strcpy(s_axis[axis].ver, ver);
-        ESP_LOGI(TAG, "Unit %s firmware %s", AXIS_PROTO[axis].get_cmd, ver);
+    axis_runtime_t *a = &s_axis[axis];
+    a->status_tried = true;
+    if (st.ver_found) {
+        strcpy(a->ver, st.ver);
     }
+    a->offset_known = st.offset_found;
+    a->offset = st.offset;
     xSemaphoreGive(s_lock);
+    if (st.ver_found) {
+        ESP_LOGI(TAG, "Unit %s firmware %s", st.proto->get_cmd, st.ver);
+    }
+    if (st.offset_found) {
+        ESP_LOGI(TAG, "Unit %s offset %d", st.proto->get_cmd, st.offset);
+    }
 }
 
 static void send_goto(rotator_axis_t axis, int deg)
@@ -152,15 +183,30 @@ static void send_goto(rotator_axis_t axis, int deg)
     bus_read_until(ANSWER_TIMEOUT_MS, accept_nothing, NULL);   // consume the "new ... =" confirmation
 }
 
+static void send_offset(rotator_axis_t axis, int deg)
+{
+    ESP_LOGI(TAG, "Offset %s -> %d", axis == ROTATOR_AXIS_AZ ? "azimuth" : "elevation", deg);
+    bus_send(AXIS_PROTO[axis].offset_cmd, deg, true);
+    bus_read_until(ANSWER_TIMEOUT_MS, accept_nothing, NULL);   // consume the "new ... offset =" confirmation
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    s_axis[axis].status_tried = false;   // read the stored offset back from the unit
+    xSemaphoreGive(s_lock);
+}
+
 static void handle_cmd(const cmd_t *cmd)
 {
+    if (cmd->kind == CMD_OFFSET) {
+        send_offset(cmd->axis, cmd->deg);
+        return;
+    }
+    bool stop = cmd->kind == CMD_STOP;
     xSemaphoreTake(s_lock, portMAX_DELAY);
     axis_runtime_t *a = &s_axis[cmd->axis];
-    int deg = cmd->stop ? a->deg : cmd->deg;
-    a->has_target = !cmd->stop;
+    int deg = stop ? a->deg : cmd->deg;
+    a->has_target = !stop;
     a->target = deg;
     xSemaphoreGive(s_lock);
-    ESP_LOGI(TAG, "%s %s -> %d", cmd->stop ? "Stop" : "Goto", cmd->axis == ROTATOR_AXIS_AZ ? "azimuth" : "elevation", deg);
+    ESP_LOGI(TAG, "%s %s -> %d", stop ? "Stop" : "Goto", cmd->axis == ROTATOR_AXIS_AZ ? "azimuth" : "elevation", deg);
     send_goto(cmd->axis, deg);
 }
 
@@ -179,9 +225,9 @@ static void bus_task(void *arg)
         }
 
         for (int i = 0; i < ROTATOR_AXIS_COUNT; i++) {
-            if (s_axis[i].installed && s_axis[i].answered && !s_axis[i].ver_tried &&
+            if (s_axis[i].installed && s_axis[i].answered && !s_axis[i].status_tried &&
                 esp_timer_get_time() - s_axis[i].last_ok_us < ROTATOR_OFFLINE_AFTER_MS * 1000LL) {
-                query_version((rotator_axis_t)i);
+                query_status((rotator_axis_t)i);
             }
         }
 
@@ -263,13 +309,15 @@ void rotator_get_state(rotator_state_t *out)
         o->has_target = a->has_target;
         o->target = a->target;
         strcpy(o->ver, a->ver);
+        o->offset_known = a->offset_known;
+        o->offset = a->offset;
     }
     xSemaphoreGive(s_lock);
 }
 
-static bool enqueue(rotator_axis_t axis, bool stop, int deg)
+static bool enqueue(rotator_axis_t axis, cmd_kind_t kind, int deg)
 {
-    cmd_t cmd = { .axis = axis, .stop = stop, .deg = deg };
+    cmd_t cmd = { .axis = axis, .kind = kind, .deg = deg };
     if (xQueueSend(s_cmd_queue, &cmd, 0) != pdPASS) {
         ESP_LOGE(TAG, "Command queue full");
         return false;
@@ -282,12 +330,12 @@ bool rotator_cmd_az_goto(int deg)
     if (deg < 0 || deg > 359) {
         return false;
     }
-    return enqueue(ROTATOR_AXIS_AZ, false, deg);
+    return enqueue(ROTATOR_AXIS_AZ, CMD_GOTO, deg);
 }
 
 bool rotator_cmd_az_stop(void)
 {
-    return enqueue(ROTATOR_AXIS_AZ, true, 0);
+    return enqueue(ROTATOR_AXIS_AZ, CMD_STOP, 0);
 }
 
 static bool el_installed(void)
@@ -303,7 +351,7 @@ bool rotator_cmd_el_goto(int deg)
     if (deg < ROTATOR_EL_MIN_DEG || deg > ROTATOR_EL_MAX_DEG || !el_installed()) {
         return false;
     }
-    return enqueue(ROTATOR_AXIS_EL, false, deg);
+    return enqueue(ROTATOR_AXIS_EL, CMD_GOTO, deg);
 }
 
 bool rotator_cmd_el_stop(void)
@@ -311,7 +359,16 @@ bool rotator_cmd_el_stop(void)
     if (!el_installed()) {
         return false;
     }
-    return enqueue(ROTATOR_AXIS_EL, true, 0);
+    return enqueue(ROTATOR_AXIS_EL, CMD_STOP, 0);
+}
+
+bool rotator_cmd_set_offset(rotator_axis_t axis, int deg)
+{
+    if (axis >= ROTATOR_AXIS_COUNT || deg < -ROTATOR_OFFSET_LIMIT_DEG || deg > ROTATOR_OFFSET_LIMIT_DEG ||
+        (axis == ROTATOR_AXIS_EL && !el_installed())) {
+        return false;
+    }
+    return enqueue(axis, CMD_OFFSET, deg);
 }
 
 bool rotator_set_el_installed(bool installed)
