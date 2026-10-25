@@ -1,0 +1,5 @@
+# Defaults for options missing from sdkconfig.ESP32LAN (new components); existing values win.
+# LVGL (display_ui.c uses its own fonts from src/fonts), heap shared with the rest of the firmware
+CONFIG_LV_USE_CLIB_MALLOC=y
+CONFIG_LV_USE_CLIB_STRING=y
+CONFIG_LV_USE_CLIB_SPRINTF=y

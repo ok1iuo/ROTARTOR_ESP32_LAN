@@ -1,0 +1,6 @@
+## ESP-IDF component manager dependencies of the main component (fetched into managed_components/)
+dependencies:
+  idf: ">=5.2"
+  espressif/esp_lcd_st7796: "~1.5.0"
+  espressif/esp_lvgl_port: "~2.9.0"
+  lvgl/lvgl: "~9.5.0"
