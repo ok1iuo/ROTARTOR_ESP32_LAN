@@ -17,6 +17,9 @@
 #define ROTATOR_POLL_PERIOD_MS   250   // one AZ + EL poll round
 #define ROTATOR_OFFLINE_AFTER_MS 2000  // unit counts as not communicating after this silence
 
+#define ROTATOR_EL_MIN_DEG  -20   // elevation goto limits (same range as the web arc)
+#define ROTATOR_EL_MAX_DEG  100
+
 typedef enum {
     ROTATOR_AXIS_AZ = 0,
     ROTATOR_AXIS_EL = 1,
@@ -51,6 +54,13 @@ bool rotator_cmd_az_goto(int deg);
 
 // Stops the azimuth by setting its target to the current position.
 bool rotator_cmd_az_stop(void);
+
+// Requests the elevation to turn to deg (ROTATOR_EL_MIN_DEG..ROTATOR_EL_MAX_DEG).
+// Returns false when the EL unit is not installed, the value is out of range or the queue is full.
+bool rotator_cmd_el_goto(int deg);
+
+// Stops the elevation by setting its target to the current position.
+bool rotator_cmd_el_stop(void);
 
 // Sets whether the elevation unit is installed; persisted in NVS. When not installed the
 // EL unit is not polled and its silence is not reported as a fault.

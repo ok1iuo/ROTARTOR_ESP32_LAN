@@ -10,6 +10,7 @@
 #include "freertos/task.h"
 
 #include "fw_version.h"
+#include "gs232_server.h"
 #include "rotator.h"
 
 static const char *TAG_WEB = "WEB_SERVER";
@@ -49,6 +50,7 @@ static char *build_state_json(void)
     rotator_get_state(&st);
     cJSON *root = cJSON_CreateObject();
     cJSON_AddStringToObject(root, "ver", FW_VERSION);
+    cJSON_AddStringToObject(root, "gs232", gs232_server_get_variant() == GS232_VARIANT_B ? "B" : "A");
     cJSON_AddItemToObject(root, "az", axis_to_json(&st.axis[ROTATOR_AXIS_AZ]));
     cJSON_AddItemToObject(root, "el", axis_to_json(&st.axis[ROTATOR_AXIS_EL]));
     char *json = cJSON_PrintUnformatted(root);
@@ -104,7 +106,7 @@ static esp_err_t http_server_uri_handler(httpd_req_t *req)
 }
 
 // Commands from the page: {"cmd":"az_goto","deg":N}, {"cmd":"az_stop"},
-// {"cmd":"set_el_installed","value":true|false}
+// {"cmd":"set_el_installed","value":true|false}, {"cmd":"set_gs232","value":"A"|"B"}
 static void handle_client_command(const char *payload)
 {
     cJSON *root = cJSON_Parse(payload);
@@ -121,6 +123,9 @@ static void handle_client_command(const char *payload)
         rotator_cmd_az_stop();
     } else if (cJSON_IsString(cmd) && strcmp(cmd->valuestring, "set_el_installed") == 0 && cJSON_IsBool(value)) {
         rotator_set_el_installed(cJSON_IsTrue(value));
+    } else if (cJSON_IsString(cmd) && strcmp(cmd->valuestring, "set_gs232") == 0 && cJSON_IsString(value) &&
+               (strcmp(value->valuestring, "A") == 0 || strcmp(value->valuestring, "B") == 0)) {
+        gs232_server_set_variant(value->valuestring[0] == 'B' ? GS232_VARIANT_B : GS232_VARIANT_A);
     } else {
         ESP_LOGW(TAG_WEB, "Unknown command from client: %s", payload);
     }

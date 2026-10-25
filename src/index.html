@@ -92,7 +92,8 @@ button.ghost { background: transparent; color: var(--ink); border-color: var(--l
 button:disabled, input:disabled { opacity: .45; cursor: not-allowed }
 :focus-visible { outline: 3px solid var(--target); outline-offset: 2px }
 
-.settings label { display: flex; gap: 8px; align-items: center; font-weight: 600 }
+.settings label { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-weight: 600 }
+select { font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink) }
 .note { font-size: .82rem; color: var(--muted); margin: 0; max-width: 65ch }
 footer { font-size: .78rem; color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px 16px }
 
@@ -140,6 +141,7 @@ footer { font-size: .78rem; color: var(--muted); display: flex; flex-wrap: wrap;
       <h2>Elevace</h2>
       <div class="readout">
         <div><span class="lbl">Aktuální</span><span class="val num" id="elVal">—</span></div>
+        <div><span class="lbl">Cíl</span><span class="tgt num" id="elTgt">—</span></div>
       </div>
       <div class="state" id="elState">Čekám na první data…</div>
       <svg class="arc" viewBox="-48 -168 214 232" role="img" aria-label="Ukazatel elevace od -20 do 100 stupňů">
@@ -147,6 +149,7 @@ footer { font-size: .78rem; color: var(--muted); display: flex; flex-wrap: wrap;
         <line class="ref" x1="0" y1="0" x2="150" y2="0"/>
         <line class="ref" x1="0" y1="0" x2="0" y2="-150"/>
         <g id="elTicks"></g>
+        <line class="tline" id="elTline" x1="0" y1="0" x2="138" y2="0" visibility="hidden"/>
         <g id="elNeedle"><polygon class="needle" points="128,0 96,-8 96,-3 -10,-3 -10,3 96,3 96,8"/></g>
         <circle class="hub" r="8"/>
       </svg>
@@ -156,7 +159,14 @@ footer { font-size: .78rem; color: var(--muted); display: flex; flex-wrap: wrap;
   <section class="card settings">
     <h2>Nastavení</h2>
     <label for="elInstalled"><input type="checkbox" id="elInstalled" checked> Deska elevace je osazená</label>
-    <p class="note">Když deska elevace osazená není, jednotka se na ni neptá a její mlčení nehlásí jako poruchu. Nastavení se uloží v jednotce a platí pro všechny, kdo ji ovládají.</p>
+    <p class="note">Když deska elevace osazená není, jednotka se na ni neptá a její mlčení nehlásí jako poruchu.</p>
+    <label for="gs232">Protokol Yaesu
+      <select id="gs232">
+        <option value="A">GS-232A (+0aaa+0eee)</option>
+        <option value="B">GS-232B (AZ=aaa EL=eee)</option>
+      </select>
+    </label>
+    <p class="note">Ovládání z logovacích programů (Hamlib, PstRotator, N1MM…): Ethernet TCP port <span class="num">10001</span> na adrese <span class="num" id="hostAddr">této jednotky</span>, nebo USB sériový port <span class="num">9600 Bd, 8N1</span>. Nastavení se uloží v jednotce a platí pro všechny, kdo ji ovládají.</p>
   </section>
 
   <footer>
@@ -275,6 +285,10 @@ footer { font-size: .78rem; color: var(--muted); display: flex; flex-wrap: wrap;
     el("elCard").classList.toggle("dead", !!s && elInstalled && !elOk);
     el("elCard").classList.toggle("absent", !!s && !elInstalled);
     el("elNeedle").setAttribute("visibility", s && elInstalled && s.el.answered ? "visible" : "hidden");
+    var elHasT = !!s && elInstalled && s.el.target !== null;
+    el("elTgt").textContent = elHasT ? s.el.target + "°" : "—";
+    el("elTline").setAttribute("visibility", elHasT ? "visible" : "hidden");
+    if (elHasT) el("elTline").setAttribute("transform", "rotate(" + (-Math.max(-20, Math.min(100, s.el.target))) + ")");
     if (s) {
       if (!elInstalled) {
         el("elVal").textContent = "—";
@@ -285,14 +299,19 @@ footer { font-size: .78rem; color: var(--muted); display: flex; flex-wrap: wrap;
       } else {
         el("elVal").textContent = s.el.deg + "°";
         el("elNeedle").setAttribute("transform", "rotate(" + (-Math.max(-20, Math.min(100, s.el.deg))) + ")");
-        el("elState").textContent = elOk ? "Stojí" : "Data jsou neplatná, poslední odpověď " + ago(s.el.age_ms);
+        el("elState").textContent = !elOk ? "Data jsou neplatná, poslední odpověď " + ago(s.el.age_ms)
+          : s.el.target !== null ? "Otáčím na " + s.el.target + "°, zbývá " + Math.abs(s.el.target - s.el.deg) + "°"
+          : "Stojí";
       }
       el("verEsp").textContent = s.ver || "—";
       el("verAz").textContent = s.az.ver || "—";
       el("verEl").textContent = s.el.ver || "—";
-      if (!settingPending) el("elInstalled").checked = s.el.installed;
+      if (!settingPending) {
+        el("elInstalled").checked = s.el.installed;
+        if (s.gs232) el("gs232").value = s.gs232;
+      }
     }
-    el("elInstalled").disabled = wsDown || !s;
+    el("elInstalled").disabled = el("gs232").disabled = wsDown || !s;
   }
 
   // --- input ---
@@ -318,6 +337,12 @@ footer { font-size: .78rem; color: var(--muted); display: flex; flex-wrap: wrap;
     send({ cmd: "set_el_installed", value: want });
     setTimeout(function () { settingPending = false; }, 1000);
   });
+  el("gs232").addEventListener("change", function () {
+    settingPending = true;
+    send({ cmd: "set_gs232", value: el("gs232").value });
+    setTimeout(function () { settingPending = false; }, 1000);
+  });
+  el("hostAddr").textContent = window.location.hostname;
 
   connect();
   setInterval(render, 500);   // keeps "age" texts and the link watchdog fresh between messages

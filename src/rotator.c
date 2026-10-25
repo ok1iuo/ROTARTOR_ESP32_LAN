@@ -21,13 +21,9 @@ static const char *TAG = "ROTATOR";
 #define NVS_NAMESPACE        "rotator"
 #define NVS_KEY_EL_INSTALLED "el_inst"
 
-typedef enum {
-    CMD_AZ_GOTO,
-    CMD_AZ_STOP,
-} cmd_type_t;
-
 typedef struct {
-    cmd_type_t type;
+    rotator_axis_t axis;
+    bool stop;   // true: target = current position
     int deg;
 } cmd_t;
 
@@ -159,13 +155,13 @@ static void send_goto(rotator_axis_t axis, int deg)
 static void handle_cmd(const cmd_t *cmd)
 {
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    axis_runtime_t *az = &s_axis[ROTATOR_AXIS_AZ];
-    int deg = cmd->type == CMD_AZ_STOP ? az->deg : cmd->deg;
-    az->has_target = cmd->type == CMD_AZ_GOTO;
-    az->target = deg;
+    axis_runtime_t *a = &s_axis[cmd->axis];
+    int deg = cmd->stop ? a->deg : cmd->deg;
+    a->has_target = !cmd->stop;
+    a->target = deg;
     xSemaphoreGive(s_lock);
-    ESP_LOGI(TAG, "%s azimuth -> %d", cmd->type == CMD_AZ_STOP ? "Stop" : "Goto", deg);
-    send_goto(ROTATOR_AXIS_AZ, deg);
+    ESP_LOGI(TAG, "%s %s -> %d", cmd->stop ? "Stop" : "Goto", cmd->axis == ROTATOR_AXIS_AZ ? "azimuth" : "elevation", deg);
+    send_goto(cmd->axis, deg);
 }
 
 static void bus_task(void *arg)
@@ -271,9 +267,9 @@ void rotator_get_state(rotator_state_t *out)
     xSemaphoreGive(s_lock);
 }
 
-static bool enqueue(cmd_type_t type, int deg)
+static bool enqueue(rotator_axis_t axis, bool stop, int deg)
 {
-    cmd_t cmd = { .type = type, .deg = deg };
+    cmd_t cmd = { .axis = axis, .stop = stop, .deg = deg };
     if (xQueueSend(s_cmd_queue, &cmd, 0) != pdPASS) {
         ESP_LOGE(TAG, "Command queue full");
         return false;
@@ -286,12 +282,36 @@ bool rotator_cmd_az_goto(int deg)
     if (deg < 0 || deg > 359) {
         return false;
     }
-    return enqueue(CMD_AZ_GOTO, deg);
+    return enqueue(ROTATOR_AXIS_AZ, false, deg);
 }
 
 bool rotator_cmd_az_stop(void)
 {
-    return enqueue(CMD_AZ_STOP, 0);
+    return enqueue(ROTATOR_AXIS_AZ, true, 0);
+}
+
+static bool el_installed(void)
+{
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    bool installed = s_axis[ROTATOR_AXIS_EL].installed;
+    xSemaphoreGive(s_lock);
+    return installed;
+}
+
+bool rotator_cmd_el_goto(int deg)
+{
+    if (deg < ROTATOR_EL_MIN_DEG || deg > ROTATOR_EL_MAX_DEG || !el_installed()) {
+        return false;
+    }
+    return enqueue(ROTATOR_AXIS_EL, false, deg);
+}
+
+bool rotator_cmd_el_stop(void)
+{
+    if (!el_installed()) {
+        return false;
+    }
+    return enqueue(ROTATOR_AXIS_EL, true, 0);
 }
 
 bool rotator_set_el_installed(bool installed)
