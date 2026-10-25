@@ -16,16 +16,24 @@ Firmware dotyk zatím neobsluhuje; jeho piny níže jsou připravené pro proved
 Podle schématu [ESPlan_v1_1.pdf](ESPlan_v1_1.pdf) (2. list; kopie `HW/old/ESPlan_v1_1.pdf`
 z repozitáře [LaskaKit/ESPlan](https://github.com/LaskaKit/ESPlan)):
 
-| Pin JP1 | Signál | Pin JP1 | Signál |
-|---|---|---|---|
-| 1 | 3V3 | 9 | TX1 = IO4 (**RS485, nepoužívat**) |
-| 2 | VCC (jen napájecí vstup) | 10 | IO16 |
-| 3 | GND | 11 | IO13 (HSPI MOSI) |
-| 4 | IO34 (jen vstup) | 12 | IO12 (HSPI MISO, strapping) |
-| 5 | IO35 (jen vstup) | 13 | IO14 (HSPI SCK) |
-| 6 | IO32 (SCL) | 14 | IO39 / SENSOR_VN (jen vstup) |
-| 7 | IO33 (SDA) | 15 | RX1 = IO36 (**RS485, nepoužívat**) |
-| 8 | IO0 (strapping) | 16 | EN (reset ESP32) |
+| Pin JP1 | Signál |
+|---|---|
+| 1 | 3V3 |
+| 2 | VCC (jen napájecí vstup) |
+| 3 | GND |
+| 4 | IO34 (jen vstup) |
+| 5 | IO35 (jen vstup) |
+| 6 | IO32 (SCL) |
+| 7 | IO33 (SDA) |
+| 8 | IO0 (strapping) |
+| 9 | TX1 = IO4 (**RS485, nepoužívat**) |
+| 10 | IO16 |
+| 11 | IO13 (HSPI MOSI) |
+| 12 | IO12 (HSPI MISO, strapping) |
+| 13 | IO14 (HSPI SCK) |
+| 14 | IO39 / SENSOR_VN (jen vstup) |
+| 15 | RX1 = IO36 (**RS485, nepoužívat**) |
+| 16 | EN (reset ESP32) |
 
 ## Zapojení
 
