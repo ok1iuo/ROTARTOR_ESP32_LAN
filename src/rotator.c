@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include <esp_log.h>
+#include <nvs.h>
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
@@ -16,7 +17,9 @@ static const char *TAG = "ROTATOR";
 
 #define ANSWER_TIMEOUT_MS   100   // units answer within a few ms; leave margin for I2C reads
 #define STATUS_TIMEOUT_MS   400   // multi-line ST/ST2 answer
-#define EL_ABSENT_POLL_EVERY 8    // poll a never-seen EL unit only every Nth round
+
+#define NVS_NAMESPACE        "rotator"
+#define NVS_KEY_EL_INSTALLED "el_inst"
 
 typedef enum {
     CMD_AZ_GOTO,
@@ -42,7 +45,8 @@ static const axis_proto_t AXIS_PROTO[ROTATOR_AXIS_COUNT] = {
 };
 
 typedef struct {
-    bool present;
+    bool installed;
+    bool answered;
     int deg;
     bool has_target;
     int target;
@@ -119,10 +123,10 @@ static void poll_angle(rotator_axis_t axis)
     }
     xSemaphoreTake(s_lock, portMAX_DELAY);
     axis_runtime_t *a = &s_axis[axis];
-    if (!a->present) {
+    if (!a->answered) {
         ESP_LOGI(TAG, "Unit %s answered, angle %d", ctx.proto->get_cmd, ctx.deg);
     }
-    a->present = true;
+    a->answered = true;
     a->deg = ctx.deg;
     a->last_ok_us = esp_timer_get_time();
     if (a->has_target && rotator_target_reached(a->deg, a->target)) {
@@ -166,7 +170,6 @@ static void handle_cmd(const cmd_t *cmd)
 
 static void bus_task(void *arg)
 {
-    uint32_t round = 0;
     TickType_t last_wake = xTaskGetTickCount();
     while (true) {
         cmd_t cmd;
@@ -175,20 +178,49 @@ static void bus_task(void *arg)
         }
 
         poll_angle(ROTATOR_AXIS_AZ);
-        if (s_axis[ROTATOR_AXIS_EL].present || round % EL_ABSENT_POLL_EVERY == 0) {
+        if (s_axis[ROTATOR_AXIS_EL].installed) {
             poll_angle(ROTATOR_AXIS_EL);
         }
 
         for (int i = 0; i < ROTATOR_AXIS_COUNT; i++) {
-            if (s_axis[i].present && !s_axis[i].ver_tried &&
+            if (s_axis[i].installed && s_axis[i].answered && !s_axis[i].ver_tried &&
                 esp_timer_get_time() - s_axis[i].last_ok_us < ROTATOR_OFFLINE_AFTER_MS * 1000LL) {
                 query_version((rotator_axis_t)i);
             }
         }
 
-        round++;
         vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(ROTATOR_POLL_PERIOD_MS));
     }
+}
+
+// --- settings ---
+
+static bool load_el_installed(void)
+{
+    uint8_t value = 1;   // default: installed, so a dead unit shows up as a fault
+    nvs_handle_t h;
+    if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &h) == ESP_OK) {
+        nvs_get_u8(h, NVS_KEY_EL_INSTALLED, &value);
+        nvs_close(h);
+    }
+    return value != 0;
+}
+
+static bool save_el_installed(bool installed)
+{
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &h);
+    if (err == ESP_OK) {
+        err = nvs_set_u8(h, NVS_KEY_EL_INSTALLED, installed ? 1 : 0);
+        if (err == ESP_OK) {
+            err = nvs_commit(h);
+        }
+        nvs_close(h);
+    }
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Saving EL setting failed: %s", esp_err_to_name(err));
+    }
+    return err == ESP_OK;
 }
 
 // --- public API ---
@@ -212,6 +244,10 @@ void rotator_start(void)
     s_cmd_queue = xQueueCreate(8, sizeof(cmd_t));
     configASSERT(s_lock && s_cmd_queue);
 
+    s_axis[ROTATOR_AXIS_AZ].installed = true;
+    s_axis[ROTATOR_AXIS_EL].installed = load_el_installed();
+    ESP_LOGI(TAG, "Elevation unit %s", s_axis[ROTATOR_AXIS_EL].installed ? "installed" : "not installed");
+
     xTaskCreate(bus_task, "rotator_bus", 4096, NULL, 5, NULL);
     ESP_LOGI(TAG, "RS485 on UART%d at %d Bd, polling every %d ms", RS485_UART_PORT, RS485_BAUD_RATE, ROTATOR_POLL_PERIOD_MS);
 }
@@ -223,9 +259,10 @@ void rotator_get_state(rotator_state_t *out)
     for (int i = 0; i < ROTATOR_AXIS_COUNT; i++) {
         const axis_runtime_t *a = &s_axis[i];
         rotator_axis_state_t *o = &out->axis[i];
-        o->present = a->present;
-        o->age_ms = a->present ? (uint32_t)((now - a->last_ok_us) / 1000) : 0;
-        o->ok = a->present && o->age_ms < ROTATOR_OFFLINE_AFTER_MS;
+        o->installed = a->installed;
+        o->answered = a->answered;
+        o->age_ms = a->answered ? (uint32_t)((now - a->last_ok_us) / 1000) : 0;
+        o->ok = a->installed && a->answered && o->age_ms < ROTATOR_OFFLINE_AFTER_MS;
         o->deg = a->deg;
         o->has_target = a->has_target;
         o->target = a->target;
@@ -255,4 +292,13 @@ bool rotator_cmd_az_goto(int deg)
 bool rotator_cmd_az_stop(void)
 {
     return enqueue(CMD_AZ_STOP, 0);
+}
+
+bool rotator_set_el_installed(bool installed)
+{
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    s_axis[ROTATOR_AXIS_EL].installed = installed;
+    xSemaphoreGive(s_lock);
+    ESP_LOGI(TAG, "Elevation unit set to %s", installed ? "installed" : "not installed");
+    return save_el_installed(installed);
 }

@@ -28,7 +28,8 @@ extern const char index_html_start[] asm("_binary_index_html_start");
 static cJSON *axis_to_json(const rotator_axis_state_t *a)
 {
     cJSON *o = cJSON_CreateObject();
-    cJSON_AddBoolToObject(o, "present", a->present);
+    cJSON_AddBoolToObject(o, "installed", a->installed);
+    cJSON_AddBoolToObject(o, "answered", a->answered);
     cJSON_AddBoolToObject(o, "ok", a->ok);
     cJSON_AddNumberToObject(o, "deg", a->deg);
     if (a->has_target) {
@@ -102,7 +103,8 @@ static esp_err_t http_server_uri_handler(httpd_req_t *req)
     return httpd_resp_send(req, index_html_start, HTTPD_RESP_USE_STRLEN);
 }
 
-// Commands from the page: {"cmd":"az_goto","deg":N} and {"cmd":"az_stop"}
+// Commands from the page: {"cmd":"az_goto","deg":N}, {"cmd":"az_stop"},
+// {"cmd":"set_el_installed","value":true|false}
 static void handle_client_command(const char *payload)
 {
     cJSON *root = cJSON_Parse(payload);
@@ -112,10 +114,13 @@ static void handle_client_command(const char *payload)
     }
     const cJSON *cmd = cJSON_GetObjectItemCaseSensitive(root, "cmd");
     const cJSON *deg = cJSON_GetObjectItemCaseSensitive(root, "deg");
+    const cJSON *value = cJSON_GetObjectItemCaseSensitive(root, "value");
     if (cJSON_IsString(cmd) && strcmp(cmd->valuestring, "az_goto") == 0 && cJSON_IsNumber(deg)) {
         rotator_cmd_az_goto(deg->valueint);
     } else if (cJSON_IsString(cmd) && strcmp(cmd->valuestring, "az_stop") == 0) {
         rotator_cmd_az_stop();
+    } else if (cJSON_IsString(cmd) && strcmp(cmd->valuestring, "set_el_installed") == 0 && cJSON_IsBool(value)) {
+        rotator_set_el_installed(cJSON_IsTrue(value));
     } else {
         ESP_LOGW(TAG_WEB, "Unknown command from client: %s", payload);
     }

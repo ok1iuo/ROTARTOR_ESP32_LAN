@@ -48,6 +48,8 @@ h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .12em; color: 
 .pill.off { color: var(--muted) } .pill.off i { background: var(--line) }
 
 /* --- alarm banner --- */
+#alarms { display: grid; gap: 8px }
+#alarms:empty { display: none }
 .alarm { border: 2px solid var(--bad); background: var(--bad-bg); color: var(--bad); border-radius: 8px; padding: 12px 14px; font-weight: 700; display: flex; gap: 12px; align-items: center }
 .alarm::before { content: "!"; flex: none; width: 28px; height: 28px; border-radius: 50%; background: var(--bad); color: var(--bad-bg); display: grid; place-items: center; font-size: 1.1rem; animation: blink 1s steps(2) infinite }
 .alarm small { display: block; font-weight: 400; color: var(--ink); margin-top: 2px }
@@ -90,6 +92,8 @@ button.ghost { background: transparent; color: var(--ink); border-color: var(--l
 button:disabled, input:disabled { opacity: .45; cursor: not-allowed }
 :focus-visible { outline: 3px solid var(--target); outline-offset: 2px }
 
+.settings label { display: flex; gap: 8px; align-items: center; font-weight: 600 }
+.note { font-size: .82rem; color: var(--muted); margin: 0; max-width: 65ch }
 footer { font-size: .78rem; color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px 16px }
 
 @keyframes blink { 50% { opacity: .25 } }
@@ -146,10 +150,14 @@ footer { font-size: .78rem; color: var(--muted); display: flex; flex-wrap: wrap;
         <g id="elNeedle"><polygon class="needle" points="128,0 96,-8 96,-3 -10,-3 -10,3 96,3 96,8"/></g>
         <circle class="hub" r="8"/>
       </svg>
-      <p class="note">Ovládání elevace (příkaz F2) přijde v dalším kole, zatím jen zobrazení.</p>
     </article>
   </section>
 
+  <section class="card settings">
+    <h2>Nastavení</h2>
+    <label for="elInstalled"><input type="checkbox" id="elInstalled" checked> Deska elevace je osazená</label>
+    <p class="note">Když deska elevace osazená není, jednotka se na ni neptá a její mlčení nehlásí jako poruchu. Nastavení se uloží v jednotce a platí pro všechny, kdo ji ovládají.</p>
+  </section>
 
   <footer>
     <span>Řídicí jednotka <span class="num" id="verEsp">0.0.1</span></span>
@@ -230,24 +238,24 @@ footer { font-size: .78rem; color: var(--muted); display: flex; flex-wrap: wrap;
     var s = state;
     var wsDown = s ? now - lastMsgAt > WS_SILENT_MS : now - pageLoadedAt > WS_SILENT_MS;
     var azOk = !wsDown && s && s.az.ok;
-    var elPresent = s ? s.el.present : true;
+    var elInstalled = s ? s.el.installed : true;
     var elOk = !wsDown && s && s.el.ok;
 
     function pill(txt, cls) { return '<span class="pill ' + cls + '"><i></i>' + txt + "</span>"; }
     el("pills").innerHTML =
       pill(wsDown ? "ESP32 bez spojení" : (s ? "ESP32 spojeno" : "Připojuji…"), wsDown ? "bad" : (s ? "" : "off")) +
       pill(!s || wsDown ? "AZ ?" : (azOk ? "AZ OK" : "AZ nekomunikuje"), !s || wsDown ? "off" : (azOk ? "" : "bad")) +
-      pill(!s || wsDown ? "EL ?" : (!elPresent ? "EL se neozvala" : (elOk ? "EL OK" : "EL nekomunikuje")), !s || wsDown || !elPresent ? "off" : (elOk ? "" : "bad"));
+      pill(!s || wsDown ? "EL ?" : (!elInstalled ? "EL není osazena" : (elOk ? "EL OK" : "EL nekomunikuje")), !s || wsDown || !elInstalled ? "off" : (elOk ? "" : "bad"));
 
     var a = [];
     if (wsDown) a.push([s ? "Ztraceno spojení s řídicí jednotkou ESP32" : "Nedaří se spojit s řídicí jednotkou ESP32",
       (s ? "Údaje na stránce jsou staré. " : "") + "Stránka se znovu připojuje sama; zkontrolujte síť nebo napájení jednotky."]);
-    else if (s && !s.az.ok) a.push(["Deska AZIMUT nekomunikuje", (s.az.present ? "Poslední platná odpověď " + ago(s.az.age_ms) + ". " : "Od zapnutí neodpověděla. ") + "Zkontrolujte RS485 kabel a napájení desky. Příkazy pro azimut jsou zablokované."]);
-    if (!wsDown && s && s.el.present && !s.el.ok) a.push(["Deska ELEVACE nekomunikuje", "Poslední platná odpověď " + ago(s.el.age_ms) + ". Zkontrolujte RS485 kabel a napájení desky."]);
+    else if (s && !s.az.ok) a.push(["Deska AZIMUT nekomunikuje", (s.az.answered ? "Poslední platná odpověď " + ago(s.az.age_ms) + ". " : "Od zapnutí neodpověděla. ") + "Zkontrolujte RS485 kabel a napájení desky. Příkazy pro azimut jsou zablokované."]);
+    if (!wsDown && s && s.el.installed && !s.el.ok) a.push(["Deska ELEVACE nekomunikuje", (s.el.answered ? "Poslední platná odpověď " + ago(s.el.age_ms) + ". " : "Od zapnutí neodpověděla. ") + "Zkontrolujte RS485 kabel a napájení desky. Pokud deska elevace není osazená, vypněte ji v nastavení."]);
     el("alarms").innerHTML = a.map(function (x) { return '<div class="alarm" role="alert"><div>' + x[0] + "<small>" + x[1] + "</small></div></div>"; }).join("");
 
     el("azCard").classList.toggle("dead", !!s && !azOk);
-    if (s && s.az.present) {
+    if (s && s.az.answered) {
       el("azVal").textContent = pad3(s.az.deg) + "°";
       needleRot = shortest(needleRot, s.az.deg);
       el("needle").setAttribute("transform", "rotate(" + needleRot + ")");
@@ -258,18 +266,22 @@ footer { font-size: .78rem; color: var(--muted); display: flex; flex-wrap: wrap;
       el(id).setAttribute("visibility", hasT ? "visible" : "hidden");
       if (hasT) el(id).setAttribute("transform", "rotate(" + s.az.target + ")");
     });
-    if (s) el("azState").textContent = !azOk ? (s.az.present ? "Data jsou neplatná, poslední odpověď " + ago(s.az.age_ms) : "Deska azimutu zatím neodpověděla")
+    if (s) el("azState").textContent = !azOk ? (s.az.answered ? "Data jsou neplatná, poslední odpověď " + ago(s.az.age_ms) : "Deska azimutu zatím neodpověděla")
       : hasT ? "Otáčím na " + pad3(s.az.target) + "°, zbývá " + Math.abs(s.az.target - s.az.deg) + "°"
       : "Stojí";
     el("azGo").disabled = el("azInput").disabled = !azOk;
     el("azCancel").disabled = !azOk || !hasT;
 
-    el("elCard").classList.toggle("dead", !!s && elPresent && !elOk);
-    el("elCard").classList.toggle("absent", !!s && !elPresent);
+    el("elCard").classList.toggle("dead", !!s && elInstalled && !elOk);
+    el("elCard").classList.toggle("absent", !!s && !elInstalled);
+    el("elNeedle").setAttribute("visibility", s && elInstalled && s.el.answered ? "visible" : "hidden");
     if (s) {
-      if (!elPresent) {
+      if (!elInstalled) {
         el("elVal").textContent = "—";
-        el("elState").textContent = "Deska elevace od zapnutí neodpověděla. Pokud je nainstalovaná, zkontrolujte kabel RS485 a napájení.";
+        el("elState").textContent = "Deska elevace není osazená. Změníte to v nastavení níže.";
+      } else if (!s.el.answered) {
+        el("elVal").textContent = "—";
+        el("elState").textContent = "Deska elevace od zapnutí neodpověděla";
       } else {
         el("elVal").textContent = s.el.deg + "°";
         el("elNeedle").setAttribute("transform", "rotate(" + (-Math.max(-20, Math.min(100, s.el.deg))) + ")");
@@ -278,7 +290,9 @@ footer { font-size: .78rem; color: var(--muted); display: flex; flex-wrap: wrap;
       el("verEsp").textContent = s.ver || "—";
       el("verAz").textContent = s.az.ver || "—";
       el("verEl").textContent = s.el.ver || "—";
+      if (!settingPending) el("elInstalled").checked = s.el.installed;
     }
+    el("elInstalled").disabled = wsDown || !s;
   }
 
   // --- input ---
@@ -297,6 +311,13 @@ footer { font-size: .78rem; color: var(--muted); display: flex; flex-wrap: wrap;
     send({ cmd: "az_goto", deg: v });
   });
   el("azCancel").addEventListener("click", function () { send({ cmd: "az_stop" }); });
+  var settingPending = false;   // keep the user's click until the ESP32 confirms it in the state
+  el("elInstalled").addEventListener("change", function () {
+    var want = el("elInstalled").checked;
+    settingPending = true;
+    send({ cmd: "set_el_installed", value: want });
+    setTimeout(function () { settingPending = false; }, 1000);
+  });
 
   connect();
   setInterval(render, 500);   // keeps "age" texts and the link watchdog fresh between messages

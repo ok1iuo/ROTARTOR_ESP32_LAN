@@ -24,8 +24,9 @@ typedef enum {
 } rotator_axis_t;
 
 typedef struct {
-    bool present;      // unit has answered at least once since boot
-    bool ok;           // valid answer within ROTATOR_OFFLINE_AFTER_MS
+    bool installed;    // unit is expected on the bus (AZ always, EL per setting)
+    bool answered;     // unit has answered at least once since boot
+    bool ok;           // installed and a valid answer within ROTATOR_OFFLINE_AFTER_MS
     int deg;           // last valid angle
     bool has_target;   // a goto command is in progress
     int target;        // requested angle when has_target
@@ -37,7 +38,8 @@ typedef struct {
     rotator_axis_state_t axis[ROTATOR_AXIS_COUNT];
 } rotator_state_t;
 
-// Installs the UART driver and starts the bus task.
+// Loads settings from NVS, installs the UART driver and starts the bus task.
+// nvs_flash_init() must have been called before.
 void rotator_start(void);
 
 // Copies a consistent snapshot of the current state.
@@ -49,3 +51,7 @@ bool rotator_cmd_az_goto(int deg);
 
 // Stops the azimuth by setting its target to the current position.
 bool rotator_cmd_az_stop(void);
+
+// Sets whether the elevation unit is installed; persisted in NVS. When not installed the
+// EL unit is not polled and its silence is not reported as a fault.
+bool rotator_set_el_installed(bool installed);
