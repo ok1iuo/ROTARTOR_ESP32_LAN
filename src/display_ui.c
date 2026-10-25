@@ -56,6 +56,7 @@ static lv_obj_t *s_el_scale, *s_el_needle, *s_el_target, *s_el_value, *s_el_goto
 static lv_point_precise_t s_el_needle_pts[2], s_el_target_pts[2];
 
 static lv_obj_t *s_stop;
+static lv_obj_t *s_az_alarm, *s_el_alarm;
 
 // --- helpers -------------------------------------------------------------------
 
@@ -289,6 +290,20 @@ static void el_create(lv_obj_t *scr)
     lv_obj_align(s_el_off, LV_ALIGN_TOP_RIGHT, -40, 130);
 }
 
+// Red "unit is silent" banner laid over the axis instrument
+static lv_obj_t *alarm_create(lv_obj_t *scr, const char *text, int width)
+{
+    lv_obj_t *a = label(scr, &font_cz_20, lv_color_white(), text);
+    lv_obj_set_width(a, width);
+    lv_obj_set_style_text_align(a, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_bg_opa(a, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(a, COL_ALARM, 0);
+    lv_obj_set_style_radius(a, 8, 0);
+    lv_obj_set_style_pad_ver(a, 8, 0);
+    lv_obj_add_flag(a, LV_OBJ_FLAG_HIDDEN);
+    return a;
+}
+
 static void stop_create(lv_obj_t *scr)
 {
     s_stop = lv_obj_create(scr);
@@ -311,7 +326,12 @@ void display_ui_create(lv_obj_t *scr)
     az_create(scr);
     el_create(scr);
     stop_create(scr);
-    header_create(scr);   // last: drawn above the dial
+    header_create(scr);   // drawn above the dial
+
+    s_az_alarm = alarm_create(scr, LV_SYMBOL_WARNING " AZ nekomunikuje", 220);
+    lv_obj_align(s_az_alarm, LV_ALIGN_TOP_LEFT, AZ_X + (AZ_SIZE - 220) / 2, AZ_Y + AZ_SIZE / 2 - 20);
+    s_el_alarm = alarm_create(scr, LV_SYMBOL_WARNING " EL\nnekomunikuje", 170);
+    lv_obj_align(s_el_alarm, LV_ALIGN_TOP_RIGHT, -8, 150);
 }
 
 // --- update --------------------------------------------------------------------
@@ -323,21 +343,10 @@ void display_ui_update(const rotator_state_t *st, const char *ip, const char *fw
     bool az_fault = !az->ok;
     bool el_fault = el->installed && !el->ok;
 
-    // Header turns into an alarm bar while any installed unit is silent
-    if (az_fault || el_fault) {
-        lv_obj_set_style_bg_color(s_header, COL_ALARM, 0);
-        lv_obj_set_style_text_color(s_title, lv_color_white(), 0);
-        lv_label_set_text(s_title, az_fault && el_fault ? LV_SYMBOL_WARNING " AZ i EL nekomunikuje"
-                                   : az_fault           ? LV_SYMBOL_WARNING " AZ nekomunikuje"
-                                                        : LV_SYMBOL_WARNING " EL nekomunikuje");
-        set_hidden(s_info, true);
-    } else {
-        lv_obj_set_style_bg_color(s_header, COL_PANEL, 0);
-        lv_obj_set_style_text_color(s_title, COL_INK, 0);
-        lv_label_set_text(s_title, "OK1IUO");
-        set_hidden(s_info, false);
-        lv_label_set_text_fmt(s_info, "%s  %s", ip[0] ? ip : "bez sítě", fw_version);
-    }
+    lv_label_set_text_fmt(s_info, "%s  %s", ip[0] ? ip : "bez sítě", fw_version);
+    // A silent unit gets a red banner across its instrument
+    set_hidden(s_az_alarm, !az_fault);
+    set_hidden(s_el_alarm, !el_fault);
     pill_set(&s_pill_az, az_fault ? PILL_BAD : PILL_OK);
     pill_set(&s_pill_el, !el->installed ? PILL_OFF : el_fault ? PILL_BAD : PILL_OK);
 
